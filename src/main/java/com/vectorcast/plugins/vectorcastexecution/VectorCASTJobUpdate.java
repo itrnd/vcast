@@ -23,6 +23,7 @@
  */
 package com.vectorcast.plugins.vectorcastexecution;
 
+import com.cloudbees.hudson.plugins.folder.Folder;
 import com.tikal.jenkins.plugins.multijob.MultiJobProject;
 import com.vectorcast.plugins.vectorcastexecution.job.InvalidProjectFileException;
 import com.vectorcast.plugins.vectorcastexecution.job.JobAlreadyExistsException;
@@ -30,6 +31,7 @@ import com.vectorcast.plugins.vectorcastexecution.job.UpdateMultiJob;
 import hudson.Extension;
 import hudson.model.Descriptor;
 import hudson.model.Item;
+import hudson.model.ItemGroup;
 import hudson.scm.NullSCM;
 import jenkins.model.Jenkins;
 import hudson.tasks.Builder;
@@ -39,6 +41,7 @@ import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.servlet.ServletException;
+import net.sf.json.JSONObject;
 import org.kohsuke.stapler.HttpRedirect;
 import org.kohsuke.stapler.HttpResponse;
 import org.kohsuke.stapler.StaplerRequest;
@@ -108,38 +111,58 @@ public class VectorCASTJobUpdate extends JobBase {
     @RequirePOST
     public HttpResponse doUpdateFromSaved(final StaplerRequest request, final StaplerResponse response) throws ServletException, IOException, Descriptor.FormException, InterruptedException {
         job = new UpdateMultiJob(request, response, true);
-        String projectName = job.getMultiJobName();
+        JSONObject json = request.getSubmittedForm();
+        String callerJob = json.optString("callerJobName"); //MultiJobUpdate job
+        job.setJobFullName(callerJob);
+        String projectName = job.getMultiJobName(); // This is only jobs basename, not full path.
 
-        List<Item> jobs = Jenkins.getInstance().getAllItems();
-        for (Item searchJob : jobs) {
-            if (searchJob.getFullName().equalsIgnoreCase(projectName)) {
-                // Found the multi-job, now get the VectorCASTSetup
-                MultiJobProject project = (MultiJobProject)searchJob;
-                for (Builder builder : project.getBuilders()) {
-                    if (builder instanceof VectorCASTSetup) {
-                        // Only 1 of them, so stop afterwards
-                        VectorCASTSetup vcSetup = (VectorCASTSetup)builder;
-                        // SCM doesn't seem to be saved so use definition from project
-                        if (project.getScm() instanceof NullSCM) {
-                            vcSetup.setUsingSCM(false);
-                        } else {
-                            vcSetup.setUsingSCM(true);
-                        }
-                        vcSetup.setSCM(project.getScm());
-                        try {
-                            job.useSavedData(vcSetup);
-                            job.update();
-                            return new HttpRedirect("done");
-                        } catch (JobAlreadyExistsException ex) {
-                            // Can't happen when doing an update
-                            Logger.getLogger(VectorCASTJobUpdate.class.getName()).log(Level.SEVERE, null, ex);
-                        } catch (InvalidProjectFileException ex) {
-                            return new HttpRedirect("invalid");
-                        }
-                        return FormApply.success(".");
-                    }
+        Item multiJobUpdate = null;
+        try {
+            multiJobUpdate = Jenkins.getInstance().getItemByFullName(callerJob);
+        }
+        catch(NullPointerException e) {
+            Logger.getLogger(VectorCASTCommand.class.getName()).log(Level.WARNING, "Unable to instantiate multiJobUpdate");
+            return new HttpRedirect("vcast.updatemulti job not found");
+        }
+
+        String jobsFolder = multiJobUpdate.getParent().getFullName();
+        if (jobsFolder != null && !jobsFolder.isEmpty()) {
+            // Get vcast.multi job full path.
+            projectName = jobsFolder + "/" + projectName;
+        }
+
+        MultiJobProject project = null;
+        try {
+            project = (MultiJobProject)Jenkins.getInstance().getItemByFullName(projectName);
+        }
+        catch(NullPointerException e) {
+            Logger.getLogger(VectorCASTCommand.class.getName()).log(Level.WARNING, "Unable to instantiate multiJob");
+            return new HttpRedirect("vcast.multi job not found");
+        }
+
+        for (Builder builder : project.getBuilders()) {
+            if (builder instanceof VectorCASTSetup) {
+                // Only 1 of them, so stop afterwards
+                VectorCASTSetup vcSetup = (VectorCASTSetup)builder;
+                // SCM doesn't seem to be saved so use definition from project
+                if (project.getScm() instanceof NullSCM) {
+                    vcSetup.setUsingSCM(false);
+                } else {
+                    vcSetup.setUsingSCM(true);
                 }
-                break;
+                vcSetup.setSCM(project.getScm());
+                try {
+                    job.useSavedData(vcSetup);
+                    job.update();
+                    return new HttpRedirect("done");
+                } catch (JobAlreadyExistsException ex) {
+                    // Can't happen when doing an update
+                    Logger.getLogger(VectorCASTJobUpdate.class.getName()).log(Level.SEVERE, null, ex);
+                } catch (InvalidProjectFileException ex) {
+                    return new HttpRedirect("invalid");
+                }
+
+            return FormApply.success(".");
             }
         }
         return new HttpRedirect("invalid");

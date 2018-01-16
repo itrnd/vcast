@@ -23,16 +23,21 @@
  */
 package com.vectorcast.plugins.vectorcastexecution.job;
 
+import com.cloudbees.hudson.plugins.folder.Folder;
 import com.tikal.jenkins.plugins.multijob.MultiJobProject;
+import com.tikal.jenkins.plugins.multijob.MultiJobBuilder;
+import com.tikal.jenkins.plugins.multijob.PhaseJobsConfig;
 import hudson.model.Descriptor;
 import hudson.model.Item;
 import hudson.model.Project;
+import hudson.tasks.Builder;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.servlet.ServletException;
+import org.apache.commons.io.FilenameUtils;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
 
@@ -46,6 +51,11 @@ import org.kohsuke.stapler.StaplerResponse;
 public class UpdateMultiJob extends NewMultiJob {
     /** Deleted jobs */
     private List<String> deleted = null;
+    private String jobFullName;
+
+    public void setJobFullName(String name) {
+        this.jobFullName = name;
+    }
     /**
      * Get the list of deleted jobs
      * @return the deleted jobs
@@ -63,6 +73,7 @@ public class UpdateMultiJob extends NewMultiJob {
      */
     public UpdateMultiJob(final StaplerRequest request, final StaplerResponse response, boolean useSavedData) throws ServletException, IOException {
         super(request, response, useSavedData);
+        this.jobFullName = getBaseName() + ".vcast.updatemulti";
     }
     /**
      * Get the multi job name
@@ -83,21 +94,34 @@ public class UpdateMultiJob extends NewMultiJob {
      */
     public void update() throws IOException, ServletException, Descriptor.FormException, InterruptedException, JobAlreadyExistsException, InvalidProjectFileException {
         deleted = new ArrayList<>();
-        String projectName = getMultiJobName();
-        // Delete existing multijob
-        deleteJob(projectName);
-        // Create all other projects
-        create(true);
-        // Now remove any (now) redundant project
-        List<Item> jobs = getInstance().getAllItems();
-        for (Item job : jobs) {
-            // Delete any jobs not part of the multi-job set just added
-            if (!getProjectsNeeded().contains(job.getFullName()) &&
-                job.getFullName().startsWith(getBaseName() + "_")) {
-                deleted.add(job.getFullName());
+        String projectName = FilenameUtils.getFullPath(jobFullName) + getMultiJobName();
+        // Delete all existing phase jobs first.
+        MultiJobProject project = (MultiJobProject)getInstance().getItemByFullName(projectName);
+        for (Builder builder : project.getBuilders()) {
+            if (builder instanceof MultiJobBuilder) {
+                MultiJobBuilder multiJobBuilder = (MultiJobBuilder) builder;
+                if (multiJobBuilder.getPhaseJobs().size() > 0) {
+                    for (PhaseJobsConfig phaseConfig : multiJobBuilder.getPhaseJobs()) {
+                        //Item phaseJob = getInstance().getItem(phaseConfig.getJobName(), project.getParent());
+                        //if (phaseJob != null) {
+                            //phaseJob.delete(); //ConcurrentModificationException
+                            deleted.add(phaseConfig.getJobName());
+                        //}
+                    }
+                }
+            }
+        }
+        for (String name : deleted) {
+            Item job = getInstance().getItem(name, project.getParent());
+            if (job != null) {
                 job.delete();
             }
         }
+        // Delete existing multijob
+        //deleteJob(projectName);
+        project.delete();
+        // Create all other projects
+        create(true);
     }
     /**
      * Create new top-level project
@@ -106,8 +130,15 @@ public class UpdateMultiJob extends NewMultiJob {
      */
     @Override
     protected Project createProject() throws IOException {
-        String projectName = getBaseName() + ".vcast.multi";
-        return getInstance().createProject(MultiJobProject.class, projectName);
+        String projectName = getMultiJobName();
+        String folder = FilenameUtils.getFullPath(jobFullName);
+        if (folder != null && !folder.isEmpty()) {
+            Folder parentFolder = (Folder)getInstance().getItemByFullName(folder);
+            return parentFolder.createProject(MultiJobProject.class, projectName);
+        }
+        else {
+            return getInstance().createProject(MultiJobProject.class, projectName);
+        }
     }
     /**
      * Delete job
@@ -119,11 +150,9 @@ public class UpdateMultiJob extends NewMultiJob {
             return;
         }
         try {
-            List<Item> jobs = getInstance().getAllItems();
-            for (Item job : jobs) {
-                if (job.getFullName().equalsIgnoreCase(jobName)) {
+            Item job = getInstance().getItemByFullName(jobName);
+            if (job != null) {
                     job.delete();
-                }
             }
         } catch (InterruptedException ex) {
             Logger.getLogger(DeleteJobs.class.getName()).log(Level.SEVERE, null, ex);

@@ -23,6 +23,7 @@
  */
 package com.vectorcast.plugins.vectorcastexecution.job;
 
+import com.cloudbees.hudson.plugins.folder.Folder;
 import com.tikal.jenkins.plugins.multijob.MultiJobBuilder;
 import com.tikal.jenkins.plugins.multijob.MultiJobProject;
 import com.tikal.jenkins.plugins.multijob.PhaseJobsConfig;
@@ -44,7 +45,9 @@ import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.servlet.ServletException;
+import jenkins.model.Jenkins;
 import org.apache.commons.fileupload.FileItem;
+import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang.StringUtils;
 import org.jenkinsci.plugins.scriptsecurity.sandbox.groovy.SecureGroovyScript;
 import org.jvnet.hudson.plugins.groovypostbuild.GroovyPostbuildRecorder;
@@ -180,14 +183,20 @@ public class NewMultiJob extends BaseJob {
         projectsNeeded = new ArrayList<>();
         projectsExisting = new ArrayList<>();
         
-        projectsAdded.add(getTopProject().getName());
+        projectsAdded.add(getTopProject().getFullName());
         
         String baseName = getBaseName();
         if (getJobName() != null && !getJobName().isEmpty()) {
             baseName = getJobName();
         }
+
+        String folderName = getTopProject().getParent().getFullName();
+        if (folderName != null && !folderName.isEmpty()) {
+            folderName = folderName + "/";
+        }
+
         for (MultiJobDetail detail : manageProject.getJobs()) {
-            String name = baseName + "_" + detail.getProjectName();
+            String name = folderName + baseName + "_" + detail.getProjectName();
             projectsNeeded.add(name);
             PhaseJobsConfig phase = new PhaseJobsConfig(name, 
                     /*jobproperties*/"", 
@@ -210,7 +219,7 @@ public class NewMultiJob extends BaseJob {
 
         // Copy artifacts per building project
         for (MultiJobDetail detail : manageProject.getJobs()) {
-            String name = baseName + "_" + detail.getProjectName();
+            String name = folderName + baseName + "_" + detail.getProjectName();
             String tarFile = "";
             if (isUsingSCM()) {
                 tarFile = ", " + getBaseName() + "_" + detail.getProjectName() + "_build.tar";
@@ -359,18 +368,27 @@ getEnvironmentTeardownUnix() + "\n";
      */
     private void createProjectPair(String baseName, MultiJobDetail detail, boolean update) throws IOException {
         // Building job
+
         if (!getInstance().getJobNames().contains(baseName)) {
             projectsAdded.add(baseName);
-            FreeStyleProject p = getInstance().createProject(FreeStyleProject.class, baseName);
+            FreeStyleProject p;
+            if (getTopProject().getParent() instanceof Jenkins) {
+                p = getInstance().createProject(FreeStyleProject.class, baseName);
+            }
+            else {
+                Folder parentFolder = (Folder)getTopProject().getParent();
+                p = parentFolder.createProject(FreeStyleProject.class, baseName);
+            }
             if (p == null) {
                 return;
             }
             SCM scm = getTopProject().getScm();
             p.setScm(scm);
             addDeleteWorkspaceBeforeBuildStarts(p);
-            Label label = new LabelAtom(detail.getCompiler());
-            p.setAssignedLabel(label);
             addSetup(p);
+            // Set the label after addSetup because otherwise it's overwritten by the defaul value in VectorCASTSetup
+            Label label = getTopProject().getAssignedLabel();
+            p.setAssignedLabel(label);
             addBuildCommands(p, detail, baseName, detail.getProjectName());
             if (getOptionUseReporting()) {
                 addReportingCommands(p, detail, baseName);

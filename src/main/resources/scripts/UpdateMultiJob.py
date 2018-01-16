@@ -39,7 +39,7 @@ class VcJob:
             project_name - name of manage project
             project_file - path to manage project file
         '''
-        payload = {'manageProjectName' : proj_name}
+        payload = {'manageProjectName' : proj_name, 'callerJobName' : os.getenv('JOB_NAME')}
         files = {'manageProject' : open(proj_file, 'rb')}
         # Jenkins form submission requires data (or payload) to be part of
         # form element 'json'
