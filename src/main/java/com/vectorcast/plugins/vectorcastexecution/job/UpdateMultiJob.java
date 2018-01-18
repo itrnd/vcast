@@ -30,13 +30,18 @@ import com.tikal.jenkins.plugins.multijob.PhaseJobsConfig;
 import hudson.model.Descriptor;
 import hudson.model.Item;
 import hudson.model.Project;
+import hudson.plugins.copyartifact.BuildSelector;
+import hudson.plugins.copyartifact.CopyArtifact;
+import hudson.plugins.copyartifact.WorkspaceSelector;
 import hudson.tasks.Builder;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.servlet.ServletException;
+import org.apache.commons.fileupload.FileItem;
 import org.apache.commons.io.FilenameUtils;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
@@ -93,35 +98,126 @@ public class UpdateMultiJob extends NewMultiJob {
      * @throws InvalidProjectFileException exception
      */
     public void update() throws IOException, ServletException, Descriptor.FormException, InterruptedException, JobAlreadyExistsException, InvalidProjectFileException {
-        deleted = new ArrayList<>();
-        String projectName = FilenameUtils.getFullPath(jobFullName) + getMultiJobName();
-        // Delete all existing phase jobs first.
+
+        // Read the manage project file
+        FileItem fileItem = getRequest().getFileItem("manageProject");
+        if (fileItem == null) {
+            return;
+        }
+
+        manageFile = fileItem.getString();
+        manageProject = new ManageProject(manageFile);
+        manageProject.parse();
+        Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX manageProject.getJobs() = " + manageProject.getJobs());
+
+        String folderName = FilenameUtils.getFullPath(jobFullName);
+        String projectName = folderName + getMultiJobName();
         MultiJobProject project = (MultiJobProject)getInstance().getItemByFullName(projectName);
+        Folder projectFolder = (Folder)project.getParent();
+
+        projectsAdded = new ArrayList<>();
+        projectsExisting = new ArrayList<>();
+
+        // Collect the list of existing phase jobs within the vcast multi project
+        MultiJobBuilder multiJobBuilder = null;
         for (Builder builder : project.getBuilders()) {
             if (builder instanceof MultiJobBuilder) {
-                MultiJobBuilder multiJobBuilder = (MultiJobBuilder) builder;
-                if (multiJobBuilder.getPhaseJobs().size() > 0) {
-                    for (PhaseJobsConfig phaseConfig : multiJobBuilder.getPhaseJobs()) {
-                        //Item phaseJob = getInstance().getItem(phaseConfig.getJobName(), project.getParent());
-                        //if (phaseJob != null) {
-                            //phaseJob.delete(); //ConcurrentModificationException
-                            deleted.add(phaseConfig.getJobName());
-                        //}
+                // This branch should be reached at least once.
+                // A VCast Multi job should have at least a (empty - no phase jobs) MultiJobBuilder.
+                multiJobBuilder = (MultiJobBuilder) builder;
+                Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX Found multijob builder = " + multiJobBuilder.getPhaseName());
+                break;
+            }
+        }
+
+        List<PhaseJobsConfig> existingPhaseJobs = new ArrayList<>(multiJobBuilder.getPhaseJobs());
+        List<String> existingPhaseJobsNames = new ArrayList<>();
+        for (PhaseJobsConfig phaseJob : existingPhaseJobs) {
+            existingPhaseJobsNames.add(phaseJob.getJobName());
+        }
+
+
+        /* Parse the list of jobs needed by the manage project
+         * and add them to the multiJobBuilder */
+        List<String> manageProjectJobs = new ArrayList<>();
+        for (MultiJobDetail detail : manageProject.getJobs()){
+            String newJobName = getBaseName() + "_" + detail.getProjectName();
+            Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX newJob = " + newJobName);
+            manageProjectJobs.add(newJobName);
+            // If the needed job is not yet a phase job of the multi-job project
+            if (!existingPhaseJobsNames.contains(newJobName)) {
+                Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX newJob to be added= " + newJobName);
+                PhaseJobsConfig phase = new PhaseJobsConfig(newJobName,
+                                    /*jobproperties*/"",
+                                    /*currParams*/true,
+                                    /*configs*/null,
+                                    PhaseJobsConfig.KillPhaseOnJobResultCondition.NEVER,
+                                    /*disablejob*/false,
+                                    /*enableretrystrategy*/false,
+                                    /*parsingrulespath*/null,
+                                    /*retries*/0,
+                                    /*enablecondition*/false,
+                                    /*abort*/false,
+                                    /*condition*/"",
+                                    /*buildonly if scm changes*/false,
+                                    /*applycond if no scm changes*/false);
+                // Add phase job to project
+                multiJobBuilder.getPhaseJobs().add(phase);
+
+                // Create and add copy artifact
+                String tarFile = "";
+                if (isUsingSCM()) {
+                    tarFile = ", " + getBaseName() + "_" + detail.getProjectName() + "_build.tar";
+                }
+                CopyArtifact copyArtifact = new CopyArtifact(newJobName);
+                copyArtifact.setOptional(true);
+                copyArtifact.setFilter("**/*_rebuild*," +
+                                       "execution/*.html, " +
+                                       "management/*.html, " +
+                                       "xml_data/**" +
+                                       tarFile);
+                copyArtifact.setFingerprintArtifacts(false);
+                BuildSelector bs = new WorkspaceSelector();
+                copyArtifact.setSelector(bs);
+                project.getBuildersList().add(copyArtifact);
+            }
+            project.save();
+            setTopProject(project); // createProjectPair() uses info based on getTopProject()
+            // If the phase job does not already exist, create it
+            if (getInstance().getItem(newJobName, project.getParent()) == null) {
+                createProjectPair(newJobName, detail, true);
+            }
+        }
+
+        Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX manageProjectJobs = " + manageProjectJobs);
+        Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX existingPhaseJobsNames = " + existingPhaseJobsNames);
+
+        for (PhaseJobsConfig job : existingPhaseJobs) {
+            Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX existingPhaseJobs[] = " + job.getJobName());
+            if (!manageProjectJobs.contains(job.getJobName())) {
+                Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX toBeDeleted = " + job.getJobName());
+                Item toDeleteJob = getInstance().getItem(job.getJobName(), project.getParent());
+                if (toDeleteJob != null) {
+                    // Delete Jenkins project
+                    toDeleteJob.delete(); //ConcurrentModificationException?
+                    //deleted.add(phaseConfig.getJobName());
+                }
+                // Remove phase job from project
+                multiJobBuilder.getPhaseJobs().remove(job);
+                // Remove corresponding CopyArtifact builder from project
+                for (Builder builder : project.getBuilders()) {
+                    if (builder instanceof CopyArtifact) {
+                        CopyArtifact copyBuilder = (CopyArtifact)builder;
+                        Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX CopyArtifact found = " + copyBuilder.getProjectName());
+                        if (copyBuilder.getProjectName().equals(job.getJobName())) {
+                            Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX CopyArtifact found - delete = " + copyBuilder.getProjectName());
+                            project.getBuildersList().remove(builder);
+                        }
                     }
                 }
+
             }
         }
-        for (String name : deleted) {
-            Item job = getInstance().getItem(name, project.getParent());
-            if (job != null) {
-                job.delete();
-            }
-        }
-        // Delete existing multijob
-        //deleteJob(projectName);
-        project.delete();
-        // Create all other projects
-        create(true);
     }
     /**
      * Create new top-level project

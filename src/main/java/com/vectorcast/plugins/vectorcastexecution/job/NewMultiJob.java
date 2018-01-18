@@ -61,15 +61,15 @@ public class NewMultiJob extends BaseJob {
     /** Multi-job project name */
     private String multiProjectName;
     /** Manage file */
-    private String manageFile;
+    protected String manageFile;
     /** Parsed Manage project */
-    private ManageProject manageProject = null;
+    protected ManageProject manageProject = null;
     /** projects actually added */
-    private List<String> projectsAdded = null;
+    protected List<String> projectsAdded = null;
     /** All projects needed */
     private List<String> projectsNeeded = null;
     /** Any existing projects */
-    private List<String> projectsExisting = null;
+    protected List<String> projectsExisting = null;
     /**
      * Constructor
      * @param request request object
@@ -366,7 +366,7 @@ getEnvironmentTeardownUnix() + "\n";
      * @param update update or new
      * @throws IOException 
      */
-    private void createProjectPair(String baseName, MultiJobDetail detail, boolean update) throws IOException {
+    protected void createProjectPair(String baseName, MultiJobDetail detail, boolean update) throws IOException {
         // Building job
 
         if (!getInstance().getJobNames().contains(baseName)) {

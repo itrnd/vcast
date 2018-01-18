@@ -370,6 +370,13 @@ abstract public class BaseJob {
         return topProject;
     }
     /**
+     * Set top-level project
+     * @param project multi-job project
+     */
+    protected void setTopProject(Project project) {
+        this.topProject = project;
+    }
+    /**
      * Get manage project name
      * @return manage project name
      */
