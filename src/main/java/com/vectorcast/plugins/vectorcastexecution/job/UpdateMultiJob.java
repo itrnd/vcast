@@ -113,7 +113,6 @@ public class UpdateMultiJob extends NewMultiJob {
         String folderName = FilenameUtils.getFullPath(jobFullName);
         String projectName = folderName + getMultiJobName();
         MultiJobProject project = (MultiJobProject)getInstance().getItemByFullName(projectName);
-        Folder projectFolder = (Folder)project.getParent();
 
         projectsAdded = new ArrayList<>();
         projectsExisting = new ArrayList<>();
@@ -130,7 +129,14 @@ public class UpdateMultiJob extends NewMultiJob {
             }
         }
 
-        List<PhaseJobsConfig> existingPhaseJobs = new ArrayList<>(multiJobBuilder.getPhaseJobs());
+        List<PhaseJobsConfig> existingPhaseJobs = new ArrayList<>();
+        try {
+            existingPhaseJobs.addAll(multiJobBuilder.getPhaseJobs());
+        }
+        catch(NullPointerException e) {
+            Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "Updating existing multijob with no phase jobs");
+            multiJobBuilder.setPhaseJobs(existingPhaseJobs);
+        }
         List<String> existingPhaseJobsNames = new ArrayList<>();
         for (PhaseJobsConfig phaseJob : existingPhaseJobs) {
             existingPhaseJobsNames.add(phaseJob.getJobName());
