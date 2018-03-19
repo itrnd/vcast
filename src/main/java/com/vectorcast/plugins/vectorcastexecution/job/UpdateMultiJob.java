@@ -45,6 +45,7 @@ import org.apache.commons.fileupload.FileItem;
 import org.apache.commons.io.FilenameUtils;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
+import com.vectorcast.plugins.vectorcastexecution.VectorCASTCommand;
 
 /**
  * Update a multi-job project.
@@ -119,13 +120,20 @@ public class UpdateMultiJob extends NewMultiJob {
 
         // Collect the list of existing phase jobs within the vcast multi project
         MultiJobBuilder multiJobBuilder = null;
+        VectorCASTCommand reportsVectorCASTCmd = null; /* The reports VectorCASTCommand builder should be the
+                                                       last one in the builders list. Get a handle on it now in
+                                                       order to re-add it to the bottom of the list later. */
         for (Builder builder : project.getBuilders()) {
             if (builder instanceof MultiJobBuilder) {
                 // This branch should be reached at least once.
                 // A VCast Multi job should have at least a (empty - no phase jobs) MultiJobBuilder.
                 multiJobBuilder = (MultiJobBuilder) builder;
                 Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX Found multijob builder = " + multiJobBuilder.getPhaseName());
-                break;
+                //break;
+            }
+            else if (builder instanceof VectorCASTCommand) {
+                reportsVectorCASTCmd = (VectorCASTCommand) builder;
+                Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX VectorCASTCommand = " + reportsVectorCASTCmd.getUnixCommand());
             }
         }
 
@@ -146,6 +154,7 @@ public class UpdateMultiJob extends NewMultiJob {
         /* Parse the list of jobs needed by the manage project
          * and add them to the multiJobBuilder */
         List<String> manageProjectJobs = new ArrayList<>();
+
         for (MultiJobDetail detail : manageProject.getJobs()){
             String newJobName = getBaseName() + "_" + detail.getProjectName();
             Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX newJob = " + newJobName);
@@ -195,6 +204,11 @@ public class UpdateMultiJob extends NewMultiJob {
             }
         }
 
+        // Move the last vectorcast builder to the bottom of the builders list.
+        project.getBuildersList().remove(reportsVectorCASTCmd);
+        project.getBuildersList().add(reportsVectorCASTCmd);
+        project.save();
+
         Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX manageProjectJobs = " + manageProjectJobs);
         Logger.getLogger(UpdateMultiJob.class.getName()).log(Level.INFO, "XXX existingPhaseJobsNames = " + existingPhaseJobsNames);
 
@@ -224,6 +238,7 @@ public class UpdateMultiJob extends NewMultiJob {
 
             }
         }
+        project.save();
     }
     /**
      * Create new top-level project
